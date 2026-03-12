@@ -15,8 +15,8 @@ app = Flask(__name__)
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 }
-PROXIES = None
 
+# 內建中文公司名稱與搜尋別名資料庫
 STOCK_NAMES = {
     "^TWII": "台灣加權大盤", "^GSPC": "標普 500", "^IXIC": "納斯達克", "^DJI": "道瓊工業",
     "2330.TW": "台積電", "2317.TW": "鴻海", "2454.TW": "聯發科", "2382.TW": "廣達",
@@ -44,7 +44,7 @@ def similar(a, b):
 
 def get_latest_news(topic_url):
     try:
-        response = requests.get(topic_url, headers=HEADERS, proxies=PROXIES, verify=False, timeout=10)
+        response = requests.get(topic_url, headers=HEADERS, verify=False, timeout=10)
         root = ET.fromstring(response.content)
         news_list = []
         valid_count = 0 
@@ -99,7 +99,7 @@ def summarize_article():
     article_url = request.args.get('url')
     title = request.args.get('title', '')
     try:
-        res = requests.get(article_url, headers=HEADERS, proxies=PROXIES, verify=False, timeout=6)
+        res = requests.get(article_url, headers=HEADERS, verify=False, timeout=6)
         soup = BeautifulSoup(res.content, 'html.parser')
         
         meta_refresh = soup.find('meta', attrs={'http-equiv': lambda x: x and x.lower() == 'refresh'})
@@ -107,7 +107,7 @@ def summarize_article():
             content = meta_refresh.get('content', '')
             parts = re.split(r'url=', content, flags=re.IGNORECASE)
             if len(parts) > 1:
-                res = requests.get(parts[1].strip('\'"'), headers=HEADERS, proxies=PROXIES, verify=False, timeout=6)
+                res = requests.get(parts[1].strip('\'"'), headers=HEADERS, verify=False, timeout=6)
                 soup = BeautifulSoup(res.content, 'html.parser')
 
         for junk in soup(["script", "style", "nav", "footer", "header", "aside"]): junk.extract()
@@ -145,7 +145,7 @@ def market_data():
                 "lang": "zh-Hant-TW",
                 "region": "TW"
             }
-            search_res = requests.get(search_url, headers=HEADERS, proxies=PROXIES, params=params, verify=False, timeout=5)
+            search_res = requests.get(search_url, headers=HEADERS, params=params, verify=False, timeout=5)
             search_data = search_res.json()
             if search_data.get('quotes') and len(search_data['quotes']) > 0:
                 quote = search_data['quotes'][0]
@@ -155,7 +155,7 @@ def market_data():
             pass 
         
     try:
-        res = requests.get(f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}', headers=HEADERS, proxies=PROXIES, verify=False, timeout=5)
+        res = requests.get(f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}', headers=HEADERS, verify=False, timeout=5)
         data = res.json()
         meta = data['chart']['result'][0]['meta']
         
@@ -201,6 +201,12 @@ def home():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>每日重點新聞</title>
+        
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📰</text></svg>">
+        <link rel="apple-touch-icon" href="https://img.icons8.com/fluency/512/news.png">
+        <meta name="apple-mobile-web-app-title" content="情報中心">
+        <meta name="theme-color" content="#121212">
+        
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
             body {{ font-family: -apple-system, sans-serif; background-color: #121212; background-image: url('https://www.transparenttextures.com/patterns/dark-matter.png'); color: #e0e0e0; margin: 0; }}
@@ -218,7 +224,11 @@ def home():
             .widget-dropdown.show {{ display: block; animation: fadeIn 0.2s ease-out; }}
             @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(-5px); }} to {{ opacity: 1; transform: translateY(0); }} }}
             
-            /* 【改版重點】單行計算機與固定匯率列表 CSS */
+            .calc-row {{ display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }}
+            .calc-input {{ width: 110px; background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.2); color: #ffffff; padding: 8px; border-radius: 8px; font-family: monospace; font-size: 1rem; outline: none; transition: 0.2s; text-align: right; }}
+            .calc-input:focus {{ border-color: #74b9ff; background: rgba(0, 0, 0, 0.6); }}
+            
+            /* 單行計算機與固定匯率列表 CSS */
             .converter-row {{ display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.3); padding: 12px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 16px; }}
             .conv-input {{ width: 70px; background: transparent; border: none; border-bottom: 1px solid rgba(255,255,255,0.3); color: #fff; font-family: monospace; font-size: 1.05rem; text-align: center; outline: none; transition: 0.2s; padding-bottom: 2px; }}
             .conv-input:focus {{ border-bottom-color: #74b9ff; }}
@@ -335,7 +345,6 @@ def home():
         <script>
             setTimeout(() => {{ window.location.reload(); }}, 600000);
             let weatherChartInstance = null;
-            
             let globalExchangeRates = {{}};
 
             function getWeatherEmoji(code) {{
@@ -499,7 +508,6 @@ def home():
                 calcExchange();
             }}
 
-            // 【升級重點】單行計算機與固定匯率列表邏輯
             async function fetchCurrency() {{
                 try {{
                     let res = await fetch('https://open.er-api.com/v6/latest/USD');
@@ -508,7 +516,6 @@ def home():
                     
                     let prefs = JSON.parse(localStorage.getItem('currencyPrefs')) || {{ from: 'USD', to: 'TWD' }};
                     
-                    // 使用縮寫以適應單行寬度
                     const shortCurrencies = {{
                         'TWD': '🇹🇼 TWD', 'USD': '🇺🇸 USD', 'JPY': '🇯🇵 JPY', 'EUR': '🇪🇺 EUR',
                         'MYR': '🇲🇾 MYR', 'GBP': '🇬🇧 GBP', 'AUD': '🇦🇺 AUD', 'KRW': '🇰🇷 KRW',
@@ -520,7 +527,6 @@ def home():
                         optionsHTML += `<option value="${{code}}">${{shortCurrencies[code]}}</option>`;
                     }}
                     
-                    // 預先計算常見貨幣對 TWD 的匯率
                     let usd = (globalExchangeRates['TWD'] / globalExchangeRates['USD']).toFixed(2);
                     let jpy = (globalExchangeRates['TWD'] / globalExchangeRates['JPY']).toFixed(4);
                     let eur = (globalExchangeRates['TWD'] / globalExchangeRates['EUR']).toFixed(2);
