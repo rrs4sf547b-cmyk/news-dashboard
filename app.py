@@ -15,7 +15,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
-# 【同步升級】精準讀取你的 REDIS_URL
+# 讀取 REDIS_URL 環境變數
 REDIS_URL = os.environ.get('REDIS_URL')
 try:
     redis_client = redis.from_url(REDIS_URL) if REDIS_URL else None
@@ -257,9 +257,16 @@ def home():
             @keyframes pulse {{ 0% {{ box-shadow: 0 0 0 0 rgba(255,255,255,0.2); }} 70% {{ box-shadow: 0 0 0 6px rgba(255,255,255,0); }} 100% {{ box-shadow: 0 0 0 0 rgba(255,255,255,0); }} }}
             .widget-arrow {{ font-size: 0.6rem; opacity: 0.7; margin-left: 2px; }}
             
-            .widget-dropdown {{ display: none; position: absolute; top: 40px; left: 0; background: rgba(25, 30, 35, 0.98); backdrop-filter: blur(16px); border-radius: 12px; padding: 16px; width: max-content; min-width: 260px; box-shadow: 0 8px 32px rgba(0,0,0,0.8); border: 1px solid rgba(255, 255, 255, 0.15); text-align: left; }}
+            .widget-dropdown {{ display: none; position: absolute; top: 40px; left: 0; background: rgba(25, 30, 35, 0.98); backdrop-filter: blur(16px); border-radius: 12px; padding: 16px; width: max-content; min-width: 260px; box-shadow: 0 8px 32px rgba(0,0,0,0.8); border: 1px solid rgba(255, 255, 255, 0.15); text-align: left; z-index: 1005; }}
             .widget-dropdown.show {{ display: block; animation: fadeIn 0.2s ease-out; }}
             @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(-5px); }} to {{ opacity: 1; transform: translateY(0); }} }}
+            
+            /* 【iPad 排版修復重點】將安全堆疊模式的觸發寬度提升到 1400px */
+            @media (max-width: 1400px) {{ 
+                .widgets-row {{ position: static; justify-content: center; margin-bottom: 16px; flex-wrap: wrap; padding: 0 10px; z-index: 1010; }}
+                .widget-dropdown {{ left: 50%; transform: translateX(-50%); width: 320px; z-index: 1020; }}
+                .title-container {{ margin-top: 10px; }}
+            }}
             
             .calc-row {{ display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }}
             .calc-input {{ width: 110px; background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.2); color: #ffffff; padding: 8px; border-radius: 8px; font-family: monospace; font-size: 1rem; outline: none; transition: 0.2s; text-align: right; }}
@@ -272,12 +279,6 @@ def home():
             .conv-select option {{ background: #1a202c; color: white; }}
             .conv-swap {{ background: transparent; border: none; color: #ff7675; cursor: pointer; font-size: 1.2rem; padding: 0 4px; transition: transform 0.3s; }}
             .conv-swap:hover {{ transform: rotate(180deg); color: #ff9ff3; }}
-
-            @media (max-width: 900px) {{ 
-                .widgets-row {{ position: static; justify-content: center; margin-bottom: 16px; flex-wrap: wrap; padding: 0 10px; }}
-                .widget-dropdown {{ left: 50%; transform: translateX(-50%); width: 300px; }}
-                .title-container {{ margin-top: 10px; }}
-            }}
             
             .title-container {{ display: flex; align-items: center; justify-content: center; gap: 12px; }}
             .header-icon {{ width: 32px; height: 32px; stroke: #ffffff; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)); }}
