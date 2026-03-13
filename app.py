@@ -15,8 +15,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
-# 【同步升級】嘗試連線至 Vercel KV 雲端資料庫
-REDIS_URL = os.environ.get('KV_URL')
+# 【同步升級】精準讀取你的 REDIS_URL
+REDIS_URL = os.environ.get('REDIS_URL')
 try:
     redis_client = redis.from_url(REDIS_URL) if REDIS_URL else None
 except Exception:
@@ -51,29 +51,32 @@ ALIAS_MAP = {
 def similar(a, b):
     return SequenceMatcher(None, a, b).ratio()
 
-# 【同步升級】新增與前端接軌的資料庫同步 API
 @app.route('/api/sync', methods=['POST', 'GET'])
 def sync_prefs():
     if not redis_client:
         return jsonify({"status": "no_db"})
 
-    # 寫入雲端
     if request.method == 'POST':
         data = request.json
         user_id = data.get('user_id')
         prefs = data.get('prefs')
         if user_id and prefs:
-            redis_client.set(f"news_prefs_{user_id}", json.dumps(prefs))
-            return jsonify({"status": "ok"})
+            try:
+                redis_client.set(f"news_prefs_{user_id}", json.dumps(prefs))
+                return jsonify({"status": "ok"})
+            except Exception as e:
+                return jsonify({"status": "error", "msg": str(e)})
         return jsonify({"status": "error"})
 
-    # 讀取雲端
     elif request.method == 'GET':
         user_id = request.args.get('user_id')
         if user_id:
-            prefs = redis_client.get(f"news_prefs_{user_id}")
-            if prefs:
-                return jsonify({"status": "ok", "prefs": json.loads(prefs)})
+            try:
+                prefs = redis_client.get(f"news_prefs_{user_id}")
+                if prefs:
+                    return jsonify({"status": "ok", "prefs": json.loads(prefs)})
+            except Exception as e:
+                return jsonify({"status": "error", "msg": str(e)})
         return jsonify({"status": "empty"})
 
 def get_latest_news(topic_url):
@@ -387,7 +390,6 @@ def home():
             let weatherChartInstance = null;
             let globalExchangeRates = {{}};
             
-            // 【同步升級】前端同步大腦
             let syncCode = localStorage.getItem('syncCode') || '';
             
             document.addEventListener("DOMContentLoaded", () => {{
@@ -400,7 +402,7 @@ def home():
             }}
 
             async function promptSync() {{
-                let code = prompt("請輸入您的「專屬同步代碼」(例如您的英文名字)：\\n\\n💡 只要在其他裝置輸入相同代碼，就能自動同步所有自選股與標籤！\\n(清空輸入框可解除同步)", syncCode);
+                let code = prompt("請輸入您的「專屬同步代碼」(例如：slee13)：\\n\\n💡 只要在其他裝置輸入相同代碼，就能自動同步所有設定！\\n(清空輸入框可解除同步)", syncCode);
                 if (code !== null) {{
                     syncCode = code.trim();
                     localStorage.setItem('syncCode', syncCode);
@@ -419,7 +421,6 @@ def home():
                     let res = await fetch('/api/sync?user_id=' + encodeURIComponent(syncCode));
                     let data = await res.json();
                     if (data.status === 'ok' && data.prefs) {{
-                        // 覆寫本地設定
                         localStorage.setItem('stockPrefs', JSON.stringify(data.prefs.stocks || ['^TWII', '^GSPC', '^IXIC']));
                         localStorage.setItem('customTags', JSON.stringify(data.prefs.tags || ['國際', '科技', '財經', '體育', '娛樂', '日文', 'Netflix']));
                         localStorage.setItem('currencyPrefs', JSON.stringify(data.prefs.currency || {{ from: 'USD', to: 'TWD' }}));
@@ -427,11 +428,10 @@ def home():
                         alert("✅ 成功從雲端同步設定！畫面將自動重新整理。");
                         window.location.reload();
                     }} else if (data.status === 'empty') {{
-                        // 雲端是空的，把本地的推上去當作初始值
                         await pushToCloud();
                         updateSyncUI();
                     }} else {{
-                        alert("連線資料庫失敗，請確認已啟用 Vercel KV。");
+                        alert("連線資料庫失敗，請確認已加入 REDIS_URL 變數。");
                         updateSyncUI();
                     }}
                 }} catch(e) {{
@@ -853,7 +853,7 @@ def home():
                 let clicked = JSON.parse(localStorage.getItem('clickedNews') || '[]');
                 if (!clicked.includes(link)) {{ 
                     clicked.push(link); 
-                    if (clicked.length > 300) clicked = clicked.slice(clicked.length - 300); // 防止歷史紀錄無限膨脹
+                    if (clicked.length > 300) clicked = clicked.slice(clicked.length - 300); 
                     localStorage.setItem('clickedNews', JSON.stringify(clicked)); 
                     pushToCloud();
                 }}
