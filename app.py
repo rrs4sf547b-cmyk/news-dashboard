@@ -1,8 +1,11 @@
+import os
+import json
 import requests
 import xml.etree.ElementTree as ET
 from flask import Flask, request, jsonify
 import urllib3
 import re
+import redis
 from bs4 import BeautifulSoup
 from difflib import SequenceMatcher
 from datetime import datetime, timedelta, timezone
@@ -12,11 +15,17 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
+# 【同步升級】嘗試連線至 Vercel KV 雲端資料庫
+REDIS_URL = os.environ.get('KV_URL')
+try:
+    redis_client = redis.from_url(REDIS_URL) if REDIS_URL else None
+except Exception:
+    redis_client = None
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 }
 
-# 內建中文公司名稱與搜尋別名資料庫
 STOCK_NAMES = {
     "^TWII": "台灣加權大盤", "^GSPC": "標普 500", "^IXIC": "納斯達克", "^DJI": "道瓊工業",
     "2330.TW": "台積電", "2317.TW": "鴻海", "2454.TW": "聯發科", "2382.TW": "廣達",
@@ -41,6 +50,31 @@ ALIAS_MAP = {
 
 def similar(a, b):
     return SequenceMatcher(None, a, b).ratio()
+
+# 【同步升級】新增與前端接軌的資料庫同步 API
+@app.route('/api/sync', methods=['POST', 'GET'])
+def sync_prefs():
+    if not redis_client:
+        return jsonify({"status": "no_db"})
+
+    # 寫入雲端
+    if request.method == 'POST':
+        data = request.json
+        user_id = data.get('user_id')
+        prefs = data.get('prefs')
+        if user_id and prefs:
+            redis_client.set(f"news_prefs_{user_id}", json.dumps(prefs))
+            return jsonify({"status": "ok"})
+        return jsonify({"status": "error"})
+
+    # 讀取雲端
+    elif request.method == 'GET':
+        user_id = request.args.get('user_id')
+        if user_id:
+            prefs = redis_client.get(f"news_prefs_{user_id}")
+            if prefs:
+                return jsonify({"status": "ok", "prefs": json.loads(prefs)})
+        return jsonify({"status": "empty"})
 
 def get_latest_news(topic_url):
     try:
@@ -228,7 +262,6 @@ def home():
             .calc-input {{ width: 110px; background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.2); color: #ffffff; padding: 8px; border-radius: 8px; font-family: monospace; font-size: 1rem; outline: none; transition: 0.2s; text-align: right; }}
             .calc-input:focus {{ border-color: #74b9ff; background: rgba(0, 0, 0, 0.6); }}
             
-            /* 單行計算機與固定匯率列表 CSS */
             .converter-row {{ display: flex; align-items: center; justify-content: space-between; background: rgba(0,0,0,0.3); padding: 12px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 16px; }}
             .conv-input {{ width: 70px; background: transparent; border: none; border-bottom: 1px solid rgba(255,255,255,0.3); color: #fff; font-family: monospace; font-size: 1.05rem; text-align: center; outline: none; transition: 0.2s; padding-bottom: 2px; }}
             .conv-input:focus {{ border-bottom-color: #74b9ff; }}
@@ -292,6 +325,13 @@ def home():
             <header>
                 <div class="widgets-row">
                     <div class="widget-container">
+                        <div class="widget-btn" onclick="promptSync()" title="跨裝置同步設定">
+                            <span>🔄</span>
+                            <span id="sync-text">未同步</span>
+                        </div>
+                    </div>
+                    
+                    <div class="widget-container">
                         <div class="widget-btn" onclick="toggleWidget('weather-dropdown')" title="七天氣象">
                             <span id="weather-icon">🌍</span>
                             <span id="weather-temp">載入中...</span>
@@ -346,6 +386,75 @@ def home():
             setTimeout(() => {{ window.location.reload(); }}, 600000);
             let weatherChartInstance = null;
             let globalExchangeRates = {{}};
+            
+            // 【同步升級】前端同步大腦
+            let syncCode = localStorage.getItem('syncCode') || '';
+            
+            document.addEventListener("DOMContentLoaded", () => {{
+                updateSyncUI();
+            }});
+
+            function updateSyncUI() {{
+                document.getElementById('sync-text').innerText = syncCode ? syncCode : '未同步';
+                document.getElementById('sync-text').style.color = syncCode ? '#2ecc71' : '';
+            }}
+
+            async function promptSync() {{
+                let code = prompt("請輸入您的「專屬同步代碼」(例如您的英文名字)：\\n\\n💡 只要在其他裝置輸入相同代碼，就能自動同步所有自選股與標籤！\\n(清空輸入框可解除同步)", syncCode);
+                if (code !== null) {{
+                    syncCode = code.trim();
+                    localStorage.setItem('syncCode', syncCode);
+                    updateSyncUI();
+                    
+                    if (syncCode) {{
+                        document.getElementById('sync-text').innerText = '同步中...';
+                        await pullFromCloud();
+                    }}
+                }}
+            }}
+
+            async function pullFromCloud() {{
+                if (!syncCode) return;
+                try {{
+                    let res = await fetch('/api/sync?user_id=' + encodeURIComponent(syncCode));
+                    let data = await res.json();
+                    if (data.status === 'ok' && data.prefs) {{
+                        // 覆寫本地設定
+                        localStorage.setItem('stockPrefs', JSON.stringify(data.prefs.stocks || ['^TWII', '^GSPC', '^IXIC']));
+                        localStorage.setItem('customTags', JSON.stringify(data.prefs.tags || ['國際', '科技', '財經', '體育', '娛樂', '日文', 'Netflix']));
+                        localStorage.setItem('currencyPrefs', JSON.stringify(data.prefs.currency || {{ from: 'USD', to: 'TWD' }}));
+                        localStorage.setItem('clickedNews', JSON.stringify(data.prefs.clicked || []));
+                        alert("✅ 成功從雲端同步設定！畫面將自動重新整理。");
+                        window.location.reload();
+                    }} else if (data.status === 'empty') {{
+                        // 雲端是空的，把本地的推上去當作初始值
+                        await pushToCloud();
+                        updateSyncUI();
+                    }} else {{
+                        alert("連線資料庫失敗，請確認已啟用 Vercel KV。");
+                        updateSyncUI();
+                    }}
+                }} catch(e) {{
+                    updateSyncUI();
+                }}
+            }}
+
+            async function pushToCloud() {{
+                if (!syncCode) return;
+                let prefs = {{
+                    stocks: JSON.parse(localStorage.getItem('stockPrefs')) || ['^TWII', '^GSPC', '^IXIC'],
+                    tags: JSON.parse(localStorage.getItem('customTags')) || ['國際', '科技', '財經', '體育', '娛樂', '日文', 'Netflix'],
+                    currency: JSON.parse(localStorage.getItem('currencyPrefs')) || {{ from: 'USD', to: 'TWD' }},
+                    clicked: JSON.parse(localStorage.getItem('clickedNews')) || []
+                }};
+                try {{
+                    await fetch('/api/sync', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ user_id: syncCode, prefs: prefs }})
+                    }});
+                }} catch(e) {{}}
+            }}
 
             function getWeatherEmoji(code) {{
                 if(code===0) return '☀️'; if(code===1||code===2) return '⛅'; if(code===3) return '☁️';
@@ -475,6 +584,7 @@ def home():
                 if (!stockList.includes(input)) {{
                     stockList.push(input);
                     localStorage.setItem('stockPrefs', JSON.stringify(stockList));
+                    pushToCloud();
                     document.getElementById('stock-list').innerHTML = `<div style="text-align:center; padding:20px; color:#a0aec0;">⏳ 正在搜尋並更新股價...</div>`;
                     fetchStock(); 
                 }} else {{
@@ -490,6 +600,7 @@ def home():
                 }}
                 stockList = stockList.filter(t => t !== query);
                 localStorage.setItem('stockPrefs', JSON.stringify(stockList));
+                pushToCloud();
                 document.getElementById('stock-list').innerHTML = `<div style="text-align:center; padding:20px; color:#a0aec0;">⏳ 更新自選股中...</div>`;
                 fetchStock();
             }};
@@ -560,14 +671,14 @@ def home():
                     document.getElementById('currency-list').innerHTML = dropHTML;
                     document.getElementById('calc-from').value = prefs.from;
                     document.getElementById('calc-to').value = prefs.to;
-                    calcExchange(); 
+                    calcExchange(false); 
                 }} catch(e) {{
                     document.getElementById('curr-text').innerText = '匯率載入失敗';
                     document.getElementById('currency-list').innerHTML = '無法取得即時匯率';
                 }}
             }}
 
-            function calcExchange() {{
+            function calcExchange(shouldPush = true) {{
                 if (!globalExchangeRates || !globalExchangeRates.USD) return;
                 let rawAmt = document.getElementById('calc-amount').value.replace(/,/g, '');
                 let amt = parseFloat(rawAmt);
@@ -589,6 +700,7 @@ def home():
                 document.getElementById('curr-text').innerText = `${{from}}/${{to}} ${{displayRate}}`;
 
                 localStorage.setItem('currencyPrefs', JSON.stringify({{ from: from, to: to }}));
+                if(shouldPush) pushToCloud();
             }}
 
             function swapCurrency() {{
@@ -669,12 +781,13 @@ def home():
                 }});
                 
                 document.querySelectorAll('.delete-tag').forEach(btn => {{
-                    btn.addEventListener('click', e => {{
+                    btn.addEventListener('click', async e => {{
                         e.preventDefault(); e.stopPropagation();
                         let t = e.target.getAttribute('data-tag');
                         if (confirm(`確定要刪除「${{t}}」嗎？`)) {{
                             customTags = customTags.filter(tag => tag !== t);
                             localStorage.setItem('customTags', JSON.stringify(customTags));
+                            await pushToCloud();
                             window.location.href = currentCategory === t ? '/?category=綜合' : window.location.href;
                         }}
                     }});
@@ -684,7 +797,7 @@ def home():
                 addBtn.href = "#";
                 addBtn.textContent = "+ 新增標籤";
                 addBtn.className = "add-tag-btn";
-                addBtn.onclick = e => {{
+                addBtn.onclick = async e => {{
                     e.preventDefault();
                     let t = prompt("請輸入想要追蹤的關鍵字 (例如：台積電、大谷翔平)：");
                     if (t && t.trim() !== "") {{
@@ -692,6 +805,7 @@ def home():
                         if (t === '綜合') return alert("「綜合」為預設板塊，不需要重複新增喔！");
                         if (!customTags.includes(t)) {{
                             customTags.push(t); localStorage.setItem('customTags', JSON.stringify(customTags));
+                            await pushToCloud();
                             window.location.href = `/?category=${{encodeURIComponent(t)}}`;
                         }} else alert("這個標籤已經存在囉！");
                     }}
@@ -737,7 +851,12 @@ def home():
             function processAndHideCard(card) {{
                 let link = card.getAttribute('data-link');
                 let clicked = JSON.parse(localStorage.getItem('clickedNews') || '[]');
-                if (!clicked.includes(link)) {{ clicked.push(link); localStorage.setItem('clickedNews', JSON.stringify(clicked)); }}
+                if (!clicked.includes(link)) {{ 
+                    clicked.push(link); 
+                    if (clicked.length > 300) clicked = clicked.slice(clicked.length - 300); // 防止歷史紀錄無限膨脹
+                    localStorage.setItem('clickedNews', JSON.stringify(clicked)); 
+                    pushToCloud();
+                }}
                 card.classList.add('read');
                 let next = document.querySelector('.news-card.hidden:not(.read)');
                 if (next) next.classList.remove('hidden');
