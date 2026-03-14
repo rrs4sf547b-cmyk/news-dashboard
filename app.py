@@ -240,7 +240,7 @@ def home():
         <title>每日重點新聞</title>
         
         <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📰</text></svg>">
-        <link rel="apple-touch-icon" href="https://ui-avatars.com/api/?name=新&background=e74c3c&color=fff&size=512&font-size=0.6">
+        <link rel="apple-touch-icon" href="https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Apple_News_icon.svg/512px-Apple_News_icon.svg.png">
         <meta name="apple-mobile-web-app-title" content="情報中心">
         <meta name="theme-color" content="#121212">
         
