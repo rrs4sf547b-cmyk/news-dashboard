@@ -239,9 +239,15 @@ def home():
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>每日重點新聞</title>
         
-        <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📰</text></svg>">
-        <link rel="apple-touch-icon" href="https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Apple_News_icon.svg/512px-Apple_News_icon.svg.png">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
         <meta name="apple-mobile-web-app-title" content="情報中心">
+        
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📰</text></svg>">
+        
+        <link rel="apple-touch-icon" sizes="180x180" href="https://placehold.co/180x180/E74C3C/FFFFFF.png?text=News&v=1">
+        <link rel="apple-touch-icon-precomposed" sizes="180x180" href="https://placehold.co/180x180/E74C3C/FFFFFF.png?text=News&v=1">
+        
         <meta name="theme-color" content="#121212">
         
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
