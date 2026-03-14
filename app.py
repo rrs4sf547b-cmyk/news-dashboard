@@ -5,7 +5,6 @@ import xml.etree.ElementTree as ET
 from flask import Flask, request, jsonify
 import urllib3
 import re
-import redis
 from bs4 import BeautifulSoup
 from difflib import SequenceMatcher
 from datetime import datetime, timedelta, timezone
@@ -15,12 +14,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
-# 讀取 REDIS_URL 環境變數
-REDIS_URL = os.environ.get('REDIS_URL')
-try:
-    redis_client = redis.from_url(REDIS_URL) if REDIS_URL else None
-except Exception:
-    redis_client = None
+# 讀取 Vercel KV REST API 環境變數 (最穩定的連線方式)
+KV_REST_API_URL = os.environ.get('KV_REST_API_URL')
+KV_REST_API_TOKEN = os.environ.get('KV_REST_API_TOKEN')
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -53,30 +49,40 @@ def similar(a, b):
 
 @app.route('/api/sync', methods=['POST', 'GET'])
 def sync_prefs():
-    if not redis_client:
+    if not KV_REST_API_URL or not KV_REST_API_TOKEN:
         return jsonify({"status": "no_db"})
 
+    kv_headers = {"Authorization": f"Bearer {KV_REST_API_TOKEN}"}
+
+    # 寫入雲端
     if request.method == 'POST':
         data = request.json
         user_id = data.get('user_id')
         prefs = data.get('prefs')
         if user_id and prefs:
             try:
-                redis_client.set(f"news_prefs_{user_id}", json.dumps(prefs))
-                return jsonify({"status": "ok"})
+                payload = ["SET", f"news_prefs_{user_id}", json.dumps(prefs)]
+                r = requests.post(f"{KV_REST_API_URL}/", headers=kv_headers, json=payload, timeout=5)
+                if r.status_code == 200:
+                    return jsonify({"status": "ok"})
             except Exception as e:
-                return jsonify({"status": "error", "msg": str(e)})
+                pass
         return jsonify({"status": "error"})
 
+    # 讀取雲端
     elif request.method == 'GET':
         user_id = request.args.get('user_id')
         if user_id:
             try:
-                prefs = redis_client.get(f"news_prefs_{user_id}")
-                if prefs:
-                    return jsonify({"status": "ok", "prefs": json.loads(prefs)})
+                payload = ["GET", f"news_prefs_{user_id}"]
+                r = requests.post(f"{KV_REST_API_URL}/", headers=kv_headers, json=payload, timeout=5)
+                if r.status_code == 200:
+                    resp_data = r.json()
+                    if resp_data.get("result"):
+                        prefs_dict = json.loads(resp_data["result"])
+                        return jsonify({"status": "ok", "prefs": prefs_dict})
             except Exception as e:
-                return jsonify({"status": "error", "msg": str(e)})
+                pass
         return jsonify({"status": "empty"})
 
 def get_latest_news(topic_url):
@@ -261,6 +267,7 @@ def home():
             .widget-dropdown.show {{ display: block; animation: fadeIn 0.2s ease-out; }}
             @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(-5px); }} to {{ opacity: 1; transform: translateY(0); }} }}
             
+            /* iPad 與手機等小尺寸螢幕：自動將按鈕堆疊置中，防止重疊 */
             @media (max-width: 1400px) {{ 
                 .widgets-row {{ position: static; justify-content: center; margin-bottom: 16px; flex-wrap: wrap; padding: 0 10px; z-index: 1010; }}
                 .widget-dropdown {{ left: 50%; transform: translateX(-50%); width: 320px; z-index: 1020; }}
@@ -431,7 +438,7 @@ def home():
                         await pushToCloud();
                         updateSyncUI();
                     }} else {{
-                        alert("連線資料庫失敗，請確認已加入 REDIS_URL 變數。");
+                        alert("連線資料庫失敗，請確認已加入 KV_REST_API 變數。");
                         updateSyncUI();
                     }}
                 }} catch(e) {{
@@ -443,4 +450,428 @@ def home():
                 if (!syncCode) return;
                 let prefs = {{
                     stocks: JSON.parse(localStorage.getItem('stockPrefs')) || ['^TWII', '^GSPC', '^IXIC'],
-                    tags: JSON.parse(localStorage.getItem('customTags')) || ['國際', '科技', '財
+                    tags: JSON.parse(localStorage.getItem('customTags')) || ['國際', '科技', '財經', '體育', '娛樂', '日文', 'Netflix'],
+                    currency: JSON.parse(localStorage.getItem('currencyPrefs')) || {{ from: 'USD', to: 'TWD' }},
+                    clicked: JSON.parse(localStorage.getItem('clickedNews')) || []
+                }};
+                try {{
+                    await fetch('/api/sync', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify({{ user_id: syncCode, prefs: prefs }})
+                    }});
+                }} catch(e) {{}}
+            }}
+
+            function getWeatherEmoji(code) {{
+                if(code===0) return '☀️'; if(code===1||code===2) return '⛅'; if(code===3) return '☁️';
+                if(code>=45&&code<=48) return '🌫️'; if(code>=51&&code<=67) return '🌧️';
+                if(code>=71&&code<=77) return '❄️'; if(code>=95&&code<=99) return '⛈️'; return '🌤️';
+            }}
+            function getDayName(d) {{ return ['週日','週一','週二','週三','週四','週五','週六'][new Date(d).getDay()]; }}
+            
+            function toggleWidget(id) {{
+                document.querySelectorAll('.widget-dropdown').forEach(d => {{
+                    if(d.id !== id) d.classList.remove('show');
+                }});
+                document.getElementById(id).classList.toggle('show');
+            }}
+
+            document.addEventListener('click', e => {{
+                if (!e.target.closest('.widget-container')) {{
+                    document.querySelectorAll('.widget-dropdown').forEach(d => d.classList.remove('show'));
+                }}
+            }});
+
+            async function fetchWeather(lat, lon, locName) {{
+                try {{
+                    const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${{lat}}&longitude=${{lon}}&current_weather=true&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone=auto`);
+                    const data = await res.json();
+                    document.getElementById('weather-temp').innerText = Math.round(data.current_weather.temperature) + '°C';
+                    document.getElementById('weather-icon').innerText = getWeatherEmoji(data.current_weather.weathercode);
+                    
+                    let forecastHTML = `<div style="text-align:center; color:#a0aec0; margin-bottom:10px; font-size:0.8rem;">📍 ${{locName}}</div>`;
+                    let labels = [], maxTemps = [], minTemps = [];
+
+                    for (let i = 0; i < 7; i++) {{
+                        let date = i === 0 ? '今日' : getDayName(data.daily.time[i]);
+                        let icon = getWeatherEmoji(data.daily.weathercode[i]);
+                        let maxT = Math.round(data.daily.temperature_2m_max[i]);
+                        let minT = Math.round(data.daily.temperature_2m_min[i]);
+                        labels.push(date); maxTemps.push(maxT); minTemps.push(minT);
+                        forecastHTML += `<div class="forecast-item"><span class="forecast-day">${{date}}</span><span style="font-size: 1.1rem;">${{icon}}</span><span class="forecast-temps"><span class="temp-min">${{minT}}°</span> - <span class="temp-max">${{maxT}}°</span></span></div>`;
+                    }}
+                    document.getElementById('forecast-list').innerHTML = forecastHTML;
+
+                    const ctx = document.getElementById('forecast-chart').getContext('2d');
+                    if (weatherChartInstance) weatherChartInstance.destroy();
+                    weatherChartInstance = new Chart(ctx, {{
+                        type: 'line',
+                        data: {{ labels: labels, datasets: [
+                            {{ label: '高溫', data: maxTemps, borderColor: '#ff7675', backgroundColor: '#ff7675', borderWidth: 2, tension: 0.4, pointRadius: 2 }},
+                            {{ label: '低溫', data: minTemps, borderColor: '#74b9ff', backgroundColor: '#74b9ff', borderWidth: 2, tension: 0.4, pointRadius: 2 }}
+                        ]}},
+                        options: {{ responsive: true, maintainAspectRatio: false, plugins: {{ legend: {{ display: false }} }}, scales: {{ x: {{ ticks: {{ color: '#a0aec0', font: {{ size: 10 }} }}, grid: {{ display: false }} }}, y: {{ ticks: {{ display: false }}, grid: {{ color: 'rgba(255,255,255,0.05)' }}, border: {{ display: false }} }} }}, interaction: {{ intersect: false, mode: 'index' }} }}
+                    }});
+                }} catch (e) {{
+                    document.getElementById('weather-temp').innerText = '無資料';
+                    document.getElementById('forecast-list').innerHTML = '無法取得氣象';
+                }}
+            }}
+
+            async function fetchStock() {{
+                let stockList = JSON.parse(localStorage.getItem('stockPrefs')) || ['^TWII', '^GSPC', '^IXIC'];
+                let stockListHTML = `<div style="color:#a0aec0; margin-bottom:12px; font-size:0.8rem; text-align:center;">自選股與全球指數</div>`;
+                
+                try {{
+                    let promises = stockList.map(t => fetch(`/api/market?ticker=${{encodeURIComponent(t)}}`).then(r => r.json()));
+                    let results = await Promise.all(promises);
+                    
+                    results.forEach((data, index) => {{
+                        if (data.taiex !== "N/A") {{
+                            let color = data.change.includes('+') ? '#ff7675' : (data.change.includes('-') ? '#2ecc71' : '#e0e0e0');
+                            
+                            if (index === 0) {{
+                                let btnName = data.name.length > 8 ? data.name.substring(0, 8) + '..' : data.name;
+                                document.getElementById('stock-text').innerText = `${{btnName}} ${{data.taiex}}`;
+                            }}
+                            
+                            stockListHTML += `
+                                <div class="forecast-item" style="padding: 10px 0; align-items: center;">
+                                    <div style="flex:1; display:flex; flex-direction:column; overflow: hidden; padding-right: 10px;">
+                                        <span style="font-weight:bold; color:#ffffff; font-size:1.05rem; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${{data.name}}</span>
+                                        <span style="font-size:0.75rem; color:#a0aec0;">${{data.ticker}}</span>
+                                    </div>
+                                    <div style="text-align:right; margin-right:12px; min-width: 90px;">
+                                        <div style="font-family:monospace; font-size:1.1rem; color:${{color}}; font-weight:bold;">${{data.taiex}}</div>
+                                        <div style="font-family:monospace; font-size:0.85rem; color:${{color}};">${{data.change}}</div>
+                                    </div>
+                                    <span onclick="removeStock('${{data.query.replace(/'/g, "\\'")}}')" class="delete-tag" style="font-size:1.3rem; padding:4px;" title="移除此標的">&times;</span>
+                                </div>
+                            `;
+                        }} else {{
+                            stockListHTML += `
+                                <div class="forecast-item" style="padding: 10px 0; align-items: center; color:#ff7675;">
+                                    <div style="flex:1; padding-right: 10px;">
+                                        <div style="font-weight:bold; font-size:1rem; margin-bottom:4px;">找不到: ${{data.query}}</div>
+                                        <div style="font-size:0.75rem; color:#a0aec0; line-height:1.4;">(部分台股中文名尚未支援，請改填 4 碼代號，例如: 3533)</div>
+                                    </div>
+                                    <span onclick="removeStock('${{data.query.replace(/'/g, "\\'")}}')" class="delete-tag" style="font-size:1.3rem; padding:4px;" title="移除此標的">&times;</span>
+                                </div>
+                            `;
+                        }}
+                    }});
+                    
+                    stockListHTML += `
+                        <div class="calc-row" style="margin-top: 16px;">
+                            <input type="text" id="new-stock-input" class="calc-input" style="flex:1; text-align:left;" placeholder="請輸入代號或名稱 (例: 3533, 蘋果)">
+                            <button onclick="addStock()" style="background:#e74c3c; color:white; border:none; padding:8px 14px; border-radius:8px; cursor:pointer; font-weight:bold; transition:0.2s;">新增</button>
+                        </div>
+                        <div style="text-align: center; margin-top: 12px;">
+                            <a href="https://tw.stock.yahoo.com/" target="_blank" class="ext-link-btn">前往 Yahoo 股市 ↗</a>
+                        </div>
+                    `;
+                    
+                    document.getElementById('stock-list').innerHTML = stockListHTML;
+                    
+                    document.getElementById('new-stock-input').addEventListener('keypress', function(e) {{
+                        if (e.key === 'Enter') addStock();
+                    }});
+                    
+                }} catch(e) {{
+                    document.getElementById('stock-text').innerText = '股市連線異常';
+                    document.getElementById('stock-list').innerHTML = '連線異常，請稍後再試。';
+                }}
+            }}
+
+            window.addStock = function() {{
+                let input = document.getElementById('new-stock-input').value.trim();
+                if (!input) return;
+                let stockList = JSON.parse(localStorage.getItem('stockPrefs')) || ['^TWII', '^GSPC', '^IXIC'];
+                if (!stockList.includes(input)) {{
+                    stockList.push(input);
+                    localStorage.setItem('stockPrefs', JSON.stringify(stockList));
+                    pushToCloud();
+                    document.getElementById('stock-list').innerHTML = `<div style="text-align:center; padding:20px; color:#a0aec0;">⏳ 正在搜尋並更新股價...</div>`;
+                    fetchStock(); 
+                }} else {{
+                    alert("此標的已經在您的清單中囉！");
+                }}
+            }};
+
+            window.removeStock = function(query) {{
+                let stockList = JSON.parse(localStorage.getItem('stockPrefs')) || ['^TWII', '^GSPC', '^IXIC'];
+                if(stockList.length <= 1) {{
+                    alert("請至少保留一檔股票喔！");
+                    return;
+                }}
+                stockList = stockList.filter(t => t !== query);
+                localStorage.setItem('stockPrefs', JSON.stringify(stockList));
+                pushToCloud();
+                document.getElementById('stock-list').innerHTML = `<div style="text-align:center; padding:20px; color:#a0aec0;">⏳ 更新自選股中...</div>`;
+                fetchStock();
+            }};
+
+            function handleAmountInput(el) {{
+                let cursor = el.selectionStart;
+                let oldLen = el.value.length;
+                let val = el.value.replace(/,/g, '').replace(/[^\\d.]/g, '');
+                let parts = val.split('.');
+                if (parts.length > 2) parts = [parts[0], parts.slice(1).join('')];
+                if (parts[0]) parts[0] = parts[0].replace(/\\B(?=(\\d{{3}})+(?!\\d))/g, ",");
+                el.value = parts.join('.');
+                let newLen = el.value.length;
+                cursor += (newLen - oldLen);
+                el.setSelectionRange(cursor, cursor);
+                calcExchange();
+            }}
+
+            async function fetchCurrency() {{
+                try {{
+                    let res = await fetch('https://open.er-api.com/v6/latest/USD');
+                    let data = await res.json();
+                    globalExchangeRates = data.rates;
+                    
+                    let prefs = JSON.parse(localStorage.getItem('currencyPrefs')) || {{ from: 'USD', to: 'TWD' }};
+                    
+                    const shortCurrencies = {{
+                        'TWD': '🇹🇼 TWD', 'USD': '🇺🇸 USD', 'JPY': '🇯🇵 JPY', 'EUR': '🇪🇺 EUR',
+                        'MYR': '🇲🇾 MYR', 'GBP': '🇬🇧 GBP', 'AUD': '🇦🇺 AUD', 'KRW': '🇰🇷 KRW',
+                        'HKD': '🇭🇰 HKD', 'SGD': '🇸🇬 SGD', 'CNY': '🇨🇳 CNY'
+                    }};
+                    
+                    let optionsHTML = '';
+                    for (let code in shortCurrencies) {{
+                        optionsHTML += `<option value="${{code}}">${{shortCurrencies[code]}}</option>`;
+                    }}
+                    
+                    let usd = (globalExchangeRates['TWD'] / globalExchangeRates['USD']).toFixed(2);
+                    let jpy = (globalExchangeRates['TWD'] / globalExchangeRates['JPY']).toFixed(4);
+                    let eur = (globalExchangeRates['TWD'] / globalExchangeRates['EUR']).toFixed(2);
+                    let cny = (globalExchangeRates['TWD'] / globalExchangeRates['CNY']).toFixed(2);
+                    let hkd = (globalExchangeRates['TWD'] / globalExchangeRates['HKD']).toFixed(2);
+                    let krw = (globalExchangeRates['TWD'] / globalExchangeRates['KRW']).toFixed(4);
+                    
+                    let dropHTML = `
+                        <div style="color:#a0aec0; margin-bottom:12px; font-size:0.8rem; text-align:center;">自訂匯率計算機</div>
+                        
+                        <div class="converter-row">
+                            <input type="text" inputmode="decimal" id="calc-amount" class="conv-input" value="1" oninput="handleAmountInput(this)">
+                            <select id="calc-from" class="conv-select" onchange="calcExchange()">${{optionsHTML}}</select>
+                            
+                            <button class="conv-swap" onclick="swapCurrency()">⇄</button>
+                            
+                            <input type="text" id="calc-result" readonly class="conv-input" style="border-bottom:none; color:#2ecc71; font-weight:bold; min-width:70px;">
+                            <select id="calc-to" class="conv-select" onchange="calcExchange()">${{optionsHTML}}</select>
+                        </div>
+                        
+                        <div style="border-top: 1px dashed rgba(255,255,255,0.15); padding-top: 12px;">
+                            <div style="color:#a0aec0; font-size:0.75rem; margin-bottom:8px; text-align:center;">常見外幣 (兌 台幣 TWD)</div>
+                            <div class="forecast-item" style="padding: 6px 0;"><span>🇺🇸 美金 (USD)</span><span style="font-family:monospace; color:#e0e0e0; font-size:1.05rem;">${{usd}}</span></div>
+                            <div class="forecast-item" style="padding: 6px 0;"><span>🇯🇵 日圓 (JPY)</span><span style="font-family:monospace; color:#e0e0e0; font-size:1.05rem;">${{jpy}}</span></div>
+                            <div class="forecast-item" style="padding: 6px 0;"><span>🇪🇺 歐元 (EUR)</span><span style="font-family:monospace; color:#e0e0e0; font-size:1.05rem;">${{eur}}</span></div>
+                            <div class="forecast-item" style="padding: 6px 0;"><span>🇨🇳 人民幣 (CNY)</span><span style="font-family:monospace; color:#e0e0e0; font-size:1.05rem;">${{cny}}</span></div>
+                            <div class="forecast-item" style="padding: 6px 0;"><span>🇭🇰 港幣 (HKD)</span><span style="font-family:monospace; color:#e0e0e0; font-size:1.05rem;">${{hkd}}</span></div>
+                            <div class="forecast-item" style="padding: 6px 0; border:none;"><span>🇰🇷 韓元 (KRW)</span><span style="font-family:monospace; color:#e0e0e0; font-size:1.05rem;">${{krw}}</span></div>
+                        </div>
+                    `;
+                    document.getElementById('currency-list').innerHTML = dropHTML;
+                    document.getElementById('calc-from').value = prefs.from;
+                    document.getElementById('calc-to').value = prefs.to;
+                    calcExchange(false); 
+                }} catch(e) {{
+                    document.getElementById('curr-text').innerText = '匯率載入失敗';
+                    document.getElementById('currency-list').innerHTML = '無法取得即時匯率';
+                }}
+            }}
+
+            function calcExchange(shouldPush = true) {{
+                if (!globalExchangeRates || !globalExchangeRates.USD) return;
+                let rawAmt = document.getElementById('calc-amount').value.replace(/,/g, '');
+                let amt = parseFloat(rawAmt);
+                if (isNaN(amt)) amt = 0;
+                
+                let from = document.getElementById('calc-from').value;
+                let to = document.getElementById('calc-to').value;
+
+                let rateFromToUSD = 1 / globalExchangeRates[from];
+                let rateUSDToTo = globalExchangeRates[to];
+                let finalRate = rateFromToUSD * rateUSDToTo;
+                let result = amt * finalRate;
+
+                let resultDecimals = (result > 0 && result < 10) ? 4 : 2;
+                document.getElementById('calc-result').value = result.toLocaleString('en-US', {{ minimumFractionDigits: resultDecimals, maximumFractionDigits: resultDecimals }});
+
+                let headerDecimals = finalRate < 1 ? 4 : 2;
+                let displayRate = finalRate.toLocaleString('en-US', {{ minimumFractionDigits: headerDecimals, maximumFractionDigits: headerDecimals }});
+                document.getElementById('curr-text').innerText = `${{from}}/${{to}} ${{displayRate}}`;
+
+                localStorage.setItem('currencyPrefs', JSON.stringify({{ from: from, to: to }}));
+                if(shouldPush) pushToCloud();
+            }}
+
+            function swapCurrency() {{
+                let fromEl = document.getElementById('calc-from');
+                let toEl = document.getElementById('calc-to');
+                let temp = fromEl.value;
+                fromEl.value = toEl.value;
+                toEl.value = temp;
+                calcExchange();
+            }}
+
+            document.addEventListener("DOMContentLoaded", () => {{
+                let now = new Date();
+                document.getElementById('last-updated').innerText = `最後更新時間：${{now.toLocaleTimeString('zh-TW', {{hour12: false, hour: '2-digit', minute:'2-digit'}})}}`;
+
+                fetchStock();
+                fetchCurrency();
+
+                let isLocationFound = false;
+                let locationTimeout = setTimeout(() => {{
+                    if (!isLocationFound) fetchWeather(25.0330, 121.5654, "台北 (Taipei)");
+                }}, 3000);
+
+                if (navigator.geolocation) {{
+                    navigator.geolocation.getCurrentPosition(
+                        pos => {{
+                            isLocationFound = true;
+                            clearTimeout(locationTimeout);
+                            fetchWeather(pos.coords.latitude, pos.coords.longitude, "您目前的位置");
+                        }},
+                        err => {{
+                            isLocationFound = true;
+                            clearTimeout(locationTimeout);
+                            fetchWeather(25.0330, 121.5654, "台北 (Taipei)");
+                        }},
+                        {{ timeout: 3000, maximumAge: 60000 }} 
+                    );
+                }} else {{
+                    clearTimeout(locationTimeout);
+                    fetchWeather(25.0330, 121.5654, "台北 (Taipei)");
+                }}
+
+                let clickedNews = JSON.parse(localStorage.getItem('clickedNews') || '[]');
+                
+                document.querySelectorAll('.news-card').forEach(card => {{
+                    if (clickedNews.includes(card.getAttribute('data-link'))) card.classList.add('read');
+                }});
+                
+                let visibleCount = document.querySelectorAll('.news-card:not(.hidden):not(.read)').length;
+                while (visibleCount < 20) {{
+                    let nextSpare = document.querySelector('.news-card.hidden:not(.read)');
+                    if (nextSpare) {{
+                        nextSpare.classList.remove('hidden');
+                        visibleCount++;
+                    }} else {{
+                        break; 
+                    }}
+                }}
+                
+                let customTags = JSON.parse(localStorage.getItem('customTags'));
+                let migrated = localStorage.getItem('tagsMigrated');
+                
+                if (!customTags || !migrated) {{
+                    customTags = ['國際', '科技', '財經', '體育', '娛樂', '日文', 'Netflix']; 
+                    localStorage.setItem('customTags', JSON.stringify(customTags));
+                    localStorage.setItem('tagsMigrated', 'true'); 
+                }}
+                
+                const navTabs = document.getElementById('nav-tabs');
+                const currentCategory = new URLSearchParams(window.location.search).get('category') || '綜合';
+                
+                customTags.forEach(tag => {{
+                    let a = document.createElement('a');
+                    a.href = `/?category=${{encodeURIComponent(tag)}}`;
+                    a.innerHTML = `${{tag}} <span class="delete-tag" data-tag="${{tag}}" title="刪除">&times;</span>`;
+                    if (currentCategory === tag) a.classList.add('active');
+                    navTabs.appendChild(a);
+                }});
+                
+                document.querySelectorAll('.delete-tag').forEach(btn => {{
+                    btn.addEventListener('click', async e => {{
+                        e.preventDefault(); e.stopPropagation();
+                        let t = e.target.getAttribute('data-tag');
+                        if (confirm(`確定要刪除「${{t}}」嗎？`)) {{
+                            customTags = customTags.filter(tag => tag !== t);
+                            localStorage.setItem('customTags', JSON.stringify(customTags));
+                            await pushToCloud();
+                            window.location.href = currentCategory === t ? '/?category=綜合' : window.location.href;
+                        }}
+                    }});
+                }});
+                
+                let addBtn = document.createElement('a');
+                addBtn.href = "#";
+                addBtn.textContent = "+ 新增標籤";
+                addBtn.className = "add-tag-btn";
+                addBtn.onclick = async e => {{
+                    e.preventDefault();
+                    let t = prompt("請輸入想要追蹤的關鍵字 (例如：台積電、大谷翔平)：");
+                    if (t && t.trim() !== "") {{
+                        t = t.trim();
+                        if (t === '綜合') return alert("「綜合」為預設板塊，不需要重複新增喔！");
+                        if (!customTags.includes(t)) {{
+                            customTags.push(t); localStorage.setItem('customTags', JSON.stringify(customTags));
+                            await pushToCloud();
+                            window.location.href = `/?category=${{encodeURIComponent(t)}}`;
+                        }} else alert("這個標籤已經存在囉！");
+                    }}
+                }};
+                navTabs.appendChild(addBtn);
+
+                let activeTab = document.querySelector('.nav-tabs a.active');
+                if (activeTab) activeTab.scrollIntoView({{ behavior: 'smooth', block: 'nearest', inline: 'center' }});
+            }});
+
+            async function fetchArticleSummary(card) {{
+                if (card.hasAttribute('data-fetched')) return;
+                card.setAttribute('data-fetched', 'true');
+                let link = card.getAttribute('data-link');
+                let title = card.getAttribute('data-title');
+                let rss = card.getAttribute('data-rss');
+                let contentDiv = card.querySelector('.hover-content');
+                
+                try {{
+                    let res = await fetch('/api/summarize?url=' + encodeURIComponent(link) + '&title=' + encodeURIComponent(title));
+                    let data = await res.json();
+                    let text = data.summary === "FAIL" ? rss : data.summary;
+                    text = text.split(title).join("").trim().replace(/^[\\s\\-：:|｜]+/, '').trim();
+                    contentDiv.innerHTML = (text || "詳細內容請點擊標題閱讀。") + "<br><br><small style='color:#e74c3c;'>👉 點擊開啟新分頁</small>";
+                }} catch (e) {{
+                    contentDiv.innerHTML = rss + "<br><br><small style='color:#e74c3c;'>👉 點擊開啟新分頁</small>";
+                }}
+            }}
+
+            function handleCardClick(e, card) {{
+                if (window.getSelection().toString().length > 0) return;
+                if (!e.target.closest('button') && !e.target.closest('.delete-tag')) {{
+                    let link = card.getAttribute('data-link');
+                    window.open(link, '_blank');
+                    processAndHideCard(card);
+                }}
+            }}
+
+            function dismissCard(e, btn) {{
+                e.stopPropagation(); processAndHideCard(btn.closest('.news-card'));
+            }}
+            
+            function processAndHideCard(card) {{
+                let link = card.getAttribute('data-link');
+                let clicked = JSON.parse(localStorage.getItem('clickedNews') || '[]');
+                if (!clicked.includes(link)) {{ 
+                    clicked.push(link); 
+                    if (clicked.length > 300) clicked = clicked.slice(clicked.length - 300); 
+                    localStorage.setItem('clickedNews', JSON.stringify(clicked)); 
+                    pushToCloud();
+                }}
+                card.classList.add('read');
+                let next = document.querySelector('.news-card.hidden:not(.read)');
+                if (next) next.classList.remove('hidden');
+            }}
+        </script>
+    </body>
+    </html>
+    """
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
