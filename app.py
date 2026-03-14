@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 from flask import Flask, request, jsonify
 import urllib3
 import re
+import redis
 from bs4 import BeautifulSoup
 from difflib import SequenceMatcher
 from datetime import datetime, timedelta, timezone
@@ -14,9 +15,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
-# 讀取 Vercel KV REST API 環境變數 (最穩定的連線方式)
-KV_REST_API_URL = os.environ.get('KV_REST_API_URL')
-KV_REST_API_TOKEN = os.environ.get('KV_REST_API_TOKEN')
+# 【同步升級】精準讀取您的 REDIS_URL 環境變數
+REDIS_URL = os.environ.get('REDIS_URL')
+try:
+    redis_client = redis.from_url(REDIS_URL) if REDIS_URL else None
+except Exception:
+    redis_client = None
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -49,40 +53,30 @@ def similar(a, b):
 
 @app.route('/api/sync', methods=['POST', 'GET'])
 def sync_prefs():
-    if not KV_REST_API_URL or not KV_REST_API_TOKEN:
+    if not redis_client:
         return jsonify({"status": "no_db"})
 
-    kv_headers = {"Authorization": f"Bearer {KV_REST_API_TOKEN}"}
-
-    # 寫入雲端
     if request.method == 'POST':
         data = request.json
         user_id = data.get('user_id')
         prefs = data.get('prefs')
         if user_id and prefs:
             try:
-                payload = ["SET", f"news_prefs_{user_id}", json.dumps(prefs)]
-                r = requests.post(f"{KV_REST_API_URL}/", headers=kv_headers, json=payload, timeout=5)
-                if r.status_code == 200:
-                    return jsonify({"status": "ok"})
+                redis_client.set(f"news_prefs_{user_id}", json.dumps(prefs))
+                return jsonify({"status": "ok"})
             except Exception as e:
-                pass
+                return jsonify({"status": "error", "msg": str(e)})
         return jsonify({"status": "error"})
 
-    # 讀取雲端
     elif request.method == 'GET':
         user_id = request.args.get('user_id')
         if user_id:
             try:
-                payload = ["GET", f"news_prefs_{user_id}"]
-                r = requests.post(f"{KV_REST_API_URL}/", headers=kv_headers, json=payload, timeout=5)
-                if r.status_code == 200:
-                    resp_data = r.json()
-                    if resp_data.get("result"):
-                        prefs_dict = json.loads(resp_data["result"])
-                        return jsonify({"status": "ok", "prefs": prefs_dict})
+                prefs = redis_client.get(f"news_prefs_{user_id}")
+                if prefs:
+                    return jsonify({"status": "ok", "prefs": json.loads(prefs)})
             except Exception as e:
-                pass
+                return jsonify({"status": "error", "msg": str(e)})
         return jsonify({"status": "empty"})
 
 def get_latest_news(topic_url):
@@ -438,7 +432,7 @@ def home():
                         await pushToCloud();
                         updateSyncUI();
                     }} else {{
-                        alert("連線資料庫失敗，請確認已加入 KV_REST_API 變數。");
+                        alert("連線資料庫失敗，請確認已加入 REDIS_URL 變數。");
                         updateSyncUI();
                     }}
                 }} catch(e) {{
