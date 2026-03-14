@@ -237,7 +237,7 @@ def home():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>每日重點新聞</title>
+        <title>My Day</title>
         
         <meta name="apple-mobile-web-app-capable" content="yes">
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -245,8 +245,8 @@ def home():
         
         <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📰</text></svg>">
         
-        <link rel="apple-touch-icon" sizes="512x512" href="https://placehold.co/512x512/E74C3C/FFFFFF.png?text=My+Day&font=Montserrat">
-        <link rel="apple-touch-icon-precomposed" sizes="512x512" href="https://placehold.co/512x512/E74C3C/FFFFFF.png?text=My+Day&font=Montserrat">
+        <link rel="apple-touch-icon" sizes="512x512" href="https://placehold.co/512x512/2C3E50/F1C40F.png?text=My+Day&font=Oswald">
+        <link rel="apple-touch-icon-precomposed" sizes="512x512" href="https://placehold.co/512x512/2C3E50/F1C40F.png?text=My+Day&font=Oswald">
         
         <meta name="theme-color" content="#121212">
         
@@ -380,7 +380,7 @@ def home():
                         <circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line>
                         <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
                     </svg>
-                    <h1 class="main-title">每日重點新聞</h1>
+                    <h1 class="main-title">My Day</h1>
                 </div>
                 <div class="last-updated" id="last-updated">最後更新時間：載入中...</div>
             </header>
