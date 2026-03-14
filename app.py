@@ -241,12 +241,12 @@ def home():
         
         <meta name="apple-mobile-web-app-capable" content="yes">
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-        <meta name="apple-mobile-web-app-title" content="情報中心">
+        <meta name="apple-mobile-web-app-title" content="My Day">
         
         <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📰</text></svg>">
         
-        <link rel="apple-touch-icon" sizes="180x180" href="https://placehold.co/180x180/E74C3C/FFFFFF.png?text=News&v=1">
-        <link rel="apple-touch-icon-precomposed" sizes="180x180" href="https://placehold.co/180x180/E74C3C/FFFFFF.png?text=News&v=1">
+        <link rel="apple-touch-icon" sizes="512x512" href="https://placehold.co/512x512/E74C3C/FFFFFF.png?text=My+Day&font=Montserrat">
+        <link rel="apple-touch-icon-precomposed" sizes="512x512" href="https://placehold.co/512x512/E74C3C/FFFFFF.png?text=My+Day&font=Montserrat">
         
         <meta name="theme-color" content="#121212">
         
@@ -267,7 +267,6 @@ def home():
             .widget-dropdown.show {{ display: block; animation: fadeIn 0.2s ease-out; }}
             @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(-5px); }} to {{ opacity: 1; transform: translateY(0); }} }}
             
-            /* iPad 與手機等小尺寸螢幕：自動將按鈕堆疊置中，防止重疊 */
             @media (max-width: 1400px) {{ 
                 .widgets-row {{ position: static; justify-content: center; margin-bottom: 16px; flex-wrap: wrap; padding: 0 10px; z-index: 1010; }}
                 .widget-dropdown {{ left: 50%; transform: translateX(-50%); width: 320px; z-index: 1020; }}
